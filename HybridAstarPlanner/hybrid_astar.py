@@ -7,25 +7,32 @@ import os
 import sys
 import math
 import heapq
+from typing import List
+
 from heapdict import heapdict
 import time
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.spatial.kdtree as kd
+from irsim import EnvBase
+from irsim.world.object_base import ObstacleInfo
+from shapely import LineString, Point
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) +
-                "/../../MotionPlanning/")
+                "/../../motion-planning/")
 
 import HybridAstarPlanner.astar as astar
 import HybridAstarPlanner.draw as draw
 import CurvesGenerator.reeds_shepp as rs
 
 
+OBS_SIZE = 0.2
+
 class C:  # Parameter config
     PI = math.pi
 
-    XY_RESO = 2.0  # [m]
-    YAW_RESO = np.deg2rad(15.0)  # [rad]
+    XY_RESO = 0.5  # [m]
+    YAW_RESO = np.deg2rad(7.5)  # [rad]
     MOVE_STEP = 0.4  # [m] path interporate resolution
     N_STEER = 20.0  # steer command number
     COLLISION_CHECK_STEP = 5  # skip number for collision check
@@ -37,11 +44,11 @@ class C:  # Parameter config
     STEER_ANGLE_COST = 1.0  # steer angle penalty cost
     H_COST = 15.0  # Heuristic cost penalty cost
 
-    RF = 4.5  # [m] distance from rear to vehicle front end of vehicle
-    RB = 1.0  # [m] distance from rear to vehicle back end of vehicle
-    W = 3.0  # [m] width of vehicle
+    RF = 3.7  #  4.5  # [m] distance from rear to vehicle front end of vehicle
+    RB = 0.9  # 1.0  # [m] distance from rear to vehicle back end of vehicle
+    W = 1.6  # 3.0  # [m] width of vehicle
     WD = 0.7 * W  # [m] distance between left-right wheels
-    WB = 3.5  # [m] Wheel base
+    WB = 3   # 3.5  # [m] Wheel base
     TR = 0.5  # [m] Tyre radius
     TW = 1  # [m] Tyre width
     MAX_STEER = 0.6  # [rad] maximum steering angle
@@ -99,7 +106,7 @@ class QueuePrior:
         return len(self.queue) == 0  # if Q is empty
 
     def put(self, item, priority):
-        self.queue[item] = priority  # push 
+        self.queue[item] = priority  # push
 
     def get(self):
         return self.queue.popitem()[0]  # pop out element with smallest priority
@@ -301,11 +308,11 @@ def analystic_expantion(node, ngoal, P):
     return None
 
 
-def is_collision(x, y, yaw, P):
+def is_collision(x, y, yaw, P: Para):
     for ix, iy, iyaw in zip(x, y, yaw):
-        d = 1
+        d = OBS_SIZE
         dl = (C.RF - C.RB) / 2.0
-        r = (C.RF + C.RB) / 2.0 + d
+        r = (C.RF + C.RB) / 2.0 + d + 0.1
 
         cx = ix + dl * math.cos(iyaw)
         cy = iy + dl * math.sin(iyaw)
@@ -314,6 +321,20 @@ def is_collision(x, y, yaw, P):
 
         if not ids:
             continue
+
+        # from shapely.geometry import Point, Polygon
+        # half_x = r  # half-length of vehicle
+        # half_y = C.W / 2 + d  # half-width of vehicle
+        # for i in ids:
+        #     poly = Polygon((
+        #         (cx + half_x * math.cos(iyaw) - half_y * math.sin(iyaw), cy + half_x * math.cos(iyaw) + half_y * math.sin(iyaw)),
+        #         (cx - half_x * math.cos(iyaw) - half_y * math.sin(iyaw), cy - half_x * math.cos(iyaw) + half_y * math.sin(iyaw)),
+        #         (cx - half_x * math.cos(iyaw) + half_y * math.sin(iyaw), cy - half_x * math.cos(iyaw) - half_y * math.sin(iyaw)),
+        #         (cx + half_x * math.cos(iyaw) + half_y * math.sin(iyaw), cy + half_x * math.cos(iyaw) - half_y * math.sin(iyaw))
+        #     ))
+        #     p = Point(P.ox[i], P.oy[i])
+        #     if poly.contains(p) or poly.intersects(p):
+        #         return True
 
         for i in ids:
             xo = P.ox[i] - cx
@@ -490,11 +511,43 @@ def design_obstacles(x, y):
 
 def main():
     print("start!")
-    x, y = 51, 31
-    sx, sy, syaw0 = 10.0, 7.0, np.deg2rad(120.0)
-    gx, gy, gyaw0 = 45.0, 20.0, np.deg2rad(90.0)
+    x, y = 30, 40
+    # sx, sy, syaw0 = 0, 7.0, np.deg2rad(120.0)
+    # gx, gy, gyaw0 = 45.0, 20.0, np.deg2rad(90.0)
 
-    ox, oy = design_obstacles(x, y)
+    env = EnvBase('..\\..\\ex.yaml', save_ani=False, display=True, full=False)
+
+    # print(env.get_robot_info())
+    sx, sy, syaw0, _ = env.get_robot_state()
+    gx, gy, gyaw0 = env.get_robot_info().goal
+    sx, sy, syaw0 = sx[0], sy[0], syaw0[0]
+    gx, gy, gyaw0 = gx[0], gy[0], gyaw0[0]
+    ox, oy = [], []
+    obstacles: List[ObstacleInfo] = env.get_obstacle_list()
+    for obs in obstacles:
+        if obs.cone_type == 'Rpositive':
+            # print(obs.vertex)
+            for i in range(len(obs.vertex[0])):
+                p1 = Point(obs.vertex[0][i-1], obs.vertex[1][i-1])
+                p2 = Point(obs.vertex[0][i], obs.vertex[1][i])
+                line = LineString([p1, p2])
+                num_points = 5
+                ratios = np.linspace(0, 1, num_points)
+                discrete_points = [line.interpolate(ratio, normalized=True) for ratio in ratios]
+                ox.extend([p.x for p in discrete_points])
+                oy.extend([p.y for p in discrete_points])
+        else:
+            vx = [obs.vertex[0][i] for i in range(0, len(obs.vertex[0]), 8)]
+            vy = [obs.vertex[1][i] for i in range(0, len(obs.vertex[1]), 8)]
+            ox.extend(vx)
+            oy.extend(vy)
+    # print(env.get_robot_state())
+    # print(env.get_robot_info())
+    # print(sx, sy)
+    # print(gx, gy)
+    # print(ox)
+    # return
+    # ox, oy = design_obstacles(x, y)
 
     t0 = time.time()
     path = hybrid_astar_planning(sx, sy, syaw0, gx, gy, gyaw0,
@@ -506,14 +559,17 @@ def main():
         print("Searching failed!")
         return
 
+
     x = path.x
     y = path.y
     yaw = path.yaw
     direction = path.direction
+    np.save('..\\..\\path.npy', np.array([x, y, yaw]))
+    # return
 
     for k in range(len(x)):
         plt.cla()
-        plt.plot(ox, oy, "sk")
+        plt.plot(ox, oy, "sk", markersize=6 * OBS_SIZE)
         plt.plot(x, y, linewidth=1.5, color='r')
 
         if k < len(x) - 2:
