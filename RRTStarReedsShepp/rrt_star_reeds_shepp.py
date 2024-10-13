@@ -133,11 +133,12 @@ class RRTStarReedsShepp(RRTStar):
                 plt.plot(node.path_x, node.path_y, "-g")
 
         for (ox, oy, size) in self.obstacle_list:
-            plt.plot(ox, oy, "ok", ms=30 * size)
+            plt.plot(ox, oy, "sk", ms=6 * size)
+            # plt.plot(ox, oy, "sk", markersize=6 * 0.2)
 
         plt.plot(self.start.x, self.start.y, "xr")
         plt.plot(self.end.x, self.end.y, "xr")
-        plt.axis([-2, 15, -2, 15])
+        # plt.axis([-2, 15, -2, 15])
         plt.grid(True)
         self.plot_start_goal_arrow()
         plt.pause(0.01)

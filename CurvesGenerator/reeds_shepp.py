@@ -20,6 +20,16 @@ class PATH:
         self.yaw = yaw                      # final yaw angles [rad]
         self.directions = directions        # forward: 1, backward:-1
 
+    def __str__(self):
+        return ''.join([
+            f'lengths: {self.lengths}\n',
+            f'ctypes: {self.ctypes}\n',
+            f'L: {self.L}\n',
+            f'x: {self.x}\n',
+            f'y: {self.y}\n',
+            f'yaw: {self.yaw}\n',
+            f'directions: {self.directions}\n'
+        ])
 
 def calc_optimal_path(sx, sy, syaw, gx, gy, gyaw, maxc, step_size=STEP_SIZE):
     paths = calc_all_paths(sx, sy, syaw, gx, gy, gyaw, maxc, step_size=step_size)

@@ -1,6 +1,7 @@
 import abc
 import math
 import sys
+import time
 from typing import Tuple, List
 
 import numpy as np
@@ -19,29 +20,8 @@ import HybridAstarPlanner.astar as astar
 import scipy.spatial.kdtree as kd
 
 
-def get_local_obstacles(obstacles: List[ObstacleInfo]):
-    ox, oy = [], []
-    for obs in obstacles:
-        if obs.cone_type == 'Rpositive':
-            # print(obs.vertex)
-            for i in range(len(obs.vertex[0])):
-                p1 = Point(obs.vertex[0][i - 1], obs.vertex[1][i - 1])
-                p2 = Point(obs.vertex[0][i], obs.vertex[1][i])
-                line = LineString([p1, p2])
-                num_points = 5
-                ratios = np.linspace(0, 1, num_points)
-                discrete_points = [line.interpolate(ratio, normalized=True) for ratio in ratios]
-                ox.extend([p.x for p in discrete_points])
-                oy.extend([p.y for p in discrete_points])
-        else:
-            vx = [obs.vertex[0][i] for i in range(0, len(obs.vertex[0]), 8)]
-            vy = [obs.vertex[1][i] for i in range(0, len(obs.vertex[1]), 8)]
-            ox.extend(vx)
-            oy.extend(vy)
-    return ox, oy
-
-
 class HybridAstar(PlanningAlgorithm):
+
 
     def __init__(self, ackerman_model):
         super().__init__(ackerman_model)
@@ -104,19 +84,47 @@ class HybridAstar(PlanningAlgorithm):
         def get(self):
             return self.queue.popitem()[0]  # pop out element with smallest priority
 
-    def __init__(self, ackerman_model):
-        super().__init__(ackerman_model)
+
+    @staticmethod
+    def get_local_obstacles(obstacles: List[ObstacleInfo]):
+        ox, oy = [], []
+        for obs in obstacles:
+            if obs.cone_type == 'Rpositive':
+                # print(obs.vertex)
+                for i in range(len(obs.vertex[0])):
+                    p1 = Point(obs.vertex[0][i - 1], obs.vertex[1][i - 1])
+                    p2 = Point(obs.vertex[0][i], obs.vertex[1][i])
+                    line = LineString([p1, p2])
+                    num_points = 5
+                    ratios = np.linspace(0, 1, num_points)
+                    discrete_points = [line.interpolate(ratio, normalized=True) for ratio in ratios]
+                    ox.extend([p.x for p in discrete_points])
+                    oy.extend([p.y for p in discrete_points])
+            else:
+                vx = [obs.vertex[0][i] for i in range(0, len(obs.vertex[0]), 8)]
+                vy = [obs.vertex[1][i] for i in range(0, len(obs.vertex[1]), 8)]
+                ox.extend(vx)
+                oy.extend(vy)
+        return ox, oy
+
 
     def run(self, map_data: MapData):
         start, goal, obstacle_list = map_data.start, map_data.goal, map_data.obstacles
-        self.ox, self.oy = get_local_obstacles(obstacle_list)
+        self.ox, self.oy = self.get_local_obstacles(obstacle_list)
 
+        st = time.time()
         self.path = self.hybrid_astar_planning(
             start[0], start[1], start[2], goal[0], goal[1], goal[2],
             self.ox, self.oy,
             self.c.XY_RESO,
             self.c.YAW_RESO
         )
+        et = time.time()
+        self.metrics.planning_time = et - st
+        if self.path:
+            self.metrics.success_rate = 1
+        else:
+            self.metrics.success_rate = 0
         return self.path
 
     def hybrid_astar_planning(self, sx, sy, syaw, gx, gy, gyaw, ox, oy, xyreso, yawreso):
@@ -137,6 +145,9 @@ class HybridAstar(PlanningAlgorithm):
 
         qp = self.QueuePrior()
         qp.put(self.calc_index(nstart, P), self.calc_hybrid_cost(nstart, hmap, P))
+        self.metrics.num_of_sampled_nodes = 0
+        self.metrics.num_of_collision_check = 0
+        self.metrics.num_of_sampled_nodes += 1
 
         while True:
             if not open_set:
@@ -167,10 +178,12 @@ class HybridAstar(PlanningAlgorithm):
                 if node_ind not in open_set:
                     open_set[node_ind] = node
                     qp.put(node_ind, self.calc_hybrid_cost(node, hmap, P))
+                    self.metrics.num_of_sampled_nodes += 1
                 else:
                     if open_set[node_ind].cost > node.cost:
                         open_set[node_ind] = node
                         qp.put(node_ind, self.calc_hybrid_cost(node, hmap, P))
+                    self.metrics.num_of_sampled_nodes += 1
 
         return self.extract_path(closed_set, fnode, nstart)
 
@@ -288,6 +301,8 @@ class HybridAstar(PlanningAlgorithm):
 
         maxc = math.tan(self.c.MAX_STEER) / self.c.WB
         paths = rs.calc_all_paths(sx, sy, syaw, gx, gy, gyaw, maxc, step_size=self.c.MOVE_STEP)
+        # for path in paths:
+        #     print(path)
 
         if not paths:
             return None
@@ -311,6 +326,7 @@ class HybridAstar(PlanningAlgorithm):
 
     def is_collision(self, x, y, yaw, P: Para):
         for ix, iy, iyaw in zip(x, y, yaw):
+            self.metrics.num_of_collision_check += 1
             d = 0.2  # OBS_SIZE = 0.2
             dl = (self.c.RF - self.c.RB) / 2.0
             r = (self.c.RF + self.c.RB) / 2.0 + d + 0.1
@@ -411,19 +427,35 @@ class HybridAstar(PlanningAlgorithm):
         return self.Para(minx, miny, minyaw, maxx, maxy, maxyaw,
                     xw, yw, yaww, xyreso, yawreso, ox, oy, kdtree)
 
-    def plot_path(self):
-        x_list = self.path.x
-        y_list = self.path.y
-        yaw_list = self.path.yaw
-        direction = self.path.direction
-        np.save('..\\..\\path.npy', np.array([x_list, y_list, yaw_list]))
+    def plot_path(self, save_path=None):
+        # np.save('..\\..\\path.npy', np.array([x_list, y_list, yaw_list]))
         ox, oy = self.ox, self.oy
 
         plt.plot(ox, oy, "sk", markersize=6 * 0.2)  # OBS_SIZE=0.2
-        plt.plot(x_list, y_list, linewidth=1.5, color='r')
+
+        if self.path is not None:
+            x_list = self.path.x
+            y_list = self.path.y
+            yaw_list = self.path.yaw
+            direction = self.path.direction
+
+            # compute the path length
+            las_x, las_y = None, None
+            path_len = 0
+            for x, y in zip(x_list, y_list):
+                if las_x and las_y:
+                    path_len += math.sqrt((x - las_x) ** 2 + (y - las_y) ** 2)
+                las_x, las_y = x, y
+            self.metrics.path_length = path_len
+
+            # plot the path
+            plt.plot(x_list, y_list, linewidth=1.5, color='r')
 
         plt.title("Hybrid A*")
         plt.axis("equal")
 
-        plt.show()
+        if not save_path:
+            plt.show()
+        else:
+            plt.savefig(save_path)
         print("Plot one path!")

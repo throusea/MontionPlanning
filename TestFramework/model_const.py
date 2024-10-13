@@ -6,9 +6,9 @@ import numpy as np
 class C:  # Parameter config
     PI = math.pi
 
-    XY_RESO = 0.5  # [m]
+    XY_RESO = 2.0  # [m]
     YAW_RESO = np.deg2rad(7.5)  # [rad]
-    MOVE_STEP = 0.4  # [m] path interporate resolution
+    MOVE_STEP = 0.1  # [m] path interporate resolution
     N_STEER = 20.0  # steer command number
     COLLISION_CHECK_STEP = 5  # skip number for collision check
     EXTEND_BOUND = 1  # collision check range extended
