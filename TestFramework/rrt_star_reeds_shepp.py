@@ -7,22 +7,26 @@ author: AtsushiSakai(@Atsushi_twi)
 """
 import copy
 import math
+import os
 import random
 import sys
 import pathlib
+import time
 from typing import List
 
 import matplotlib.pyplot as plt
 import numpy as np
+from irsim.lib.kinematics import ackermann_kinematics
 from irsim.world.object_base import ObstacleInfo
 from shapely.geometry.linestring import LineString
 from shapely.geometry.point import Point
 
 sys.path.append(str(pathlib.Path(__file__).parent.parent))
 
-from RRTStarReedsShepp.rrt_star_reeds_shepp import RRTStarReedsShepp
+from RRTStarReedsShepp.my_rrt_reeds_shepp import MyRRTStar
 from RRT.rrt import RRT
-from planning_algorithm import PlanningAlgorithm, MapData
+from RRTStar.rrt_star import RRTStar
+from planning_algorithm import PlanningAlgorithm, MapData, TestMetrics
 
 show_animation = True
 
@@ -33,14 +37,25 @@ class MyRRTStarReedsShepp(PlanningAlgorithm):
         super().__init__(ackerman_model)
         self.rrt = None
         self.path = None
-        self.ox, self.oy = [], []
 
     def run(self, map_data: MapData):
         start, goal, obstacle_list = map_data.start, map_data.goal, map_data.obstacles
         obstacle_list = self.get_local_obstacles(obstacle_list)
-        self.rrt = RRT(start, goal, obstacle_list, [0, 80], max_iter=100)
-        self.path = self.rrt.planning(animation=True)
+        # self.rrt = MyRRTStar(start, goal, obstacle_list, [0, 100], max_iter=50000, ackerman_model=self.c)
+        self.rrt = RRTStar(start, goal, obstacle_list, [0, 100], max_iter=10000, expand_dis=2.0, robot_radius=2.0)
 
+        st = time.time()
+        self.path = self.rrt.planning(animation=False)
+        et = time.time()
+        # self.rrt = RRTStarReedsShepp(start, goal, obstacle_list, [])
+        self.metrics.num_of_sampled_nodes = len(self.rrt.node_list)
+        self.metrics.planning_time = et - st
+        self.metrics.num_of_collision_check = self.rrt.num_of_collision_check
+        if self.path:
+            self.metrics.success_rate = 1
+        else:
+            self.metrics.success_rate = 0
+        return self.path
 
     def get_local_obstacles(self, obstacles: List[ObstacleInfo]):
         ox, oy = [], []
@@ -61,24 +76,40 @@ class MyRRTStarReedsShepp(PlanningAlgorithm):
                 vy = [obs.vertex[1][i] for i in range(0, len(obs.vertex[1]), 8)]
                 ox.extend(vx)
                 oy.extend(vy)
-        self.ox, self.oy = ox, oy
+        # self.ox, self.oy = ox, oy
         new_obstacles = zip(ox, oy, [0.2] * len(ox))
         return list(new_obstacles)
 
 
     def plot_path(self, save_path=None):
-        x_list = self.path.x
-        y_list = self.path.y
-        yaw_list = self.path.yaw
-        direction = self.path.direction
-        np.save('..\\..\\path.npy', np.array([x_list, y_list, yaw_list]))
-        ox, oy = self.ox, self.oy
 
-        plt.plot(ox, oy, "sk", markersize=6 * 0.2)  # OBS_SIZE=0.2
-        plt.plot(x_list, y_list, linewidth=1.5, color='r')
+        if self.path:
+            print("Searching succeed!")
+            x_list = [p[0] for p in self.path]
+            y_list = [p[1] for p in self.path]
 
-        plt.title("Hybrid A*")
+            # compute the path length
+            las_x, las_y = None, None
+            path_len = 0
+            for x, y in zip(x_list, y_list):
+                if las_x and las_y:
+                    path_len += math.sqrt((x - las_x) ** 2 + (y - las_y) ** 2)
+                las_x, las_y = x, y
+            self.metrics.path_length = path_len
+            # plot the path
+            plt.plot(x_list, y_list, linewidth=1.5, color='r')
+
+        else:
+            print("Searching failed!")
+
+        plt.title("RRT*")
         plt.axis("equal")
 
-        plt.show()
-        print("Plot one path!")
+        if not save_path:
+            plt.show()
+        else:
+            save_dir = os.path.dirname(save_path)
+            os.makedirs(save_dir, exist_ok=True)
+            plt.savefig(save_path)
+            plt.close()
+            print(f"Plot one path to {save_path}!")

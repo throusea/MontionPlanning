@@ -12,15 +12,19 @@ import sys
 import pathlib
 import matplotlib.pyplot as plt
 import numpy as np
+from heapdict import heapdict
+
 sys.path.append(str(pathlib.Path(__file__).parent.parent))
 
 from ReedsSheppPath import reeds_shepp_path_planning
 from RRTStar.rrt_star import RRTStar
 
+import scipy.spatial.kdtree as kd
+
 show_animation = True
 
 
-class RRTStarReedsShepp(RRTStar):
+class MyRRTStar(RRTStar):
     """
     Class for RRT star planning with Reeds Shepp path
     """
@@ -35,10 +39,23 @@ class RRTStarReedsShepp(RRTStar):
             self.yaw = yaw
             self.path_yaw = []
 
+    class QueuePrior:
+        def __init__(self):
+            self.queue = heapdict()
+
+        def empty(self):
+            return len(self.queue) == 0  # if Q is empty
+
+        def put(self, item, priority):
+            self.queue[item] = priority  # push
+
+        def get(self):
+            return self.queue.popitem()[0]  # pop out element with smallest priority
+
     def __init__(self, start, goal, obstacle_list, rand_area,
                  max_iter=200, step_size=0.2,
                  connect_circle_dist=50.0,
-                 robot_radius=0.0
+                 ackerman_model=None
                  ):
         """
         Setting Parameter
@@ -57,15 +74,122 @@ class RRTStarReedsShepp(RRTStar):
         self.max_iter = max_iter
         self.step_size = step_size
         self.obstacle_list = obstacle_list
+        self.kd_tree = kd.KDTree([[obs[0], obs[1]] for obs in obstacle_list])
         self.connect_circle_dist = connect_circle_dist
-        self.robot_radius = robot_radius
+        self.c = ackerman_model
 
         self.curvature = 1.0
         self.goal_yaw_th = np.deg2rad(1.0)
         self.goal_xy_th = 0.5
 
+        self.num_of_collision_check = 0
+
     def set_random_seed(self, seed):
         random.seed(seed)
+
+    def check_collision(self, node: Node):
+
+        if node is None:
+            return False
+
+        for ix, iy, iyaw in zip(node.path_x, node.path_y, node.path_yaw):
+            self.num_of_collision_check += 1
+            d = 0.2  # OBS_SIZE = 0.2
+            dl = (self.c.RF - self.c.RB) / 2.0
+            r = (self.c.RF + self.c.RB) / 2.0 + d + 0.1
+
+            cx = ix + dl * math.cos(iyaw)
+            cy = iy + dl * math.sin(iyaw)
+
+            ids = self.kd_tree.query_ball_point([cx, cy], r)
+
+            if not ids:
+                continue
+
+            for i in ids:
+                xo = self.obstacle_list[i][0] - cx
+                yo = self.obstacle_list[i][1] - cy
+                dx = xo * math.cos(iyaw) + yo * math.sin(iyaw)
+                dy = -xo * math.sin(iyaw) + yo * math.cos(iyaw)
+
+                if abs(dx) < r and abs(dy) < self.c.W / 2 + d:
+                    return False
+
+        return True
+
+    def rewire(self, new_node, near_inds):
+        """
+            For each node in near_inds, this will check if it is cheaper to
+            arrive to them from new_node.
+            In such a case, this will re-assign the parent of the nodes in
+            near_inds to new_node.
+            Parameters:
+            ----------
+                new_node, Node
+                    Node randomly added which can be joined to the tree
+
+                near_inds, list of uints
+                    A list of indices of the self.new_node which contains
+                    nodes within a circle of a given radius.
+            Remark: parent is designated in choose_parent.
+
+        """
+        for i in near_inds:
+            near_node = self.node_list[i]
+            edge_node = self.steer(new_node, near_node)
+            if not edge_node:
+                continue
+            edge_node.cost = self.calc_new_cost(new_node, near_node)
+
+            no_collision = self.check_collision(edge_node)
+            improved_cost = near_node.cost > edge_node.cost
+
+            if no_collision and improved_cost:
+                for node in self.node_list:
+                    if node.parent == self.node_list[i]:
+                        node.parent = edge_node
+                self.node_list[i] = edge_node
+                self.propagate_cost_to_leaves(self.node_list[i])
+
+    def choose_parent(self, new_node, near_inds):
+        """
+        Computes the cheapest point to new_node contained in the list
+        near_inds and set such a node as the parent of new_node.
+            Arguments:
+            --------
+                new_node, Node
+                    randomly generated node with a path from its neared point
+                    There are not coalitions between this node and th tree.
+                near_inds: list
+                    Indices of indices of the nodes what are near to new_node
+
+            Returns.
+            ------
+                Node, a copy of new_node
+        """
+        if not near_inds:
+            return None
+
+        # search nearest cost in near_inds
+        costs = []
+        for i in near_inds:
+            near_node = self.node_list[i]
+            t_node = self.steer(near_node, new_node)
+            if t_node and self.check_collision(t_node):
+                costs.append(self.calc_new_cost(near_node, new_node))
+            else:
+                costs.append(float("inf"))  # the cost of collision node
+        min_cost = min(costs)
+
+        if min_cost == float("inf"):
+            print("There is no good path.(min_cost is inf)")
+            return None
+
+        min_ind = near_inds[costs.index(min_cost)]
+        new_node = self.steer(self.node_list[min_ind], new_node)
+        new_node.cost = min_cost
+
+        return new_node
 
     def planning(self, animation=True, search_until_max_iter=True):
         """
@@ -81,8 +205,7 @@ class RRTStarReedsShepp(RRTStar):
             nearest_ind = self.get_nearest_node_index(self.node_list, rnd)
             new_node = self.steer(self.node_list[nearest_ind], rnd)
 
-            if self.check_collision(
-                    new_node, self.obstacle_list, self.robot_radius):
+            if self.check_collision(new_node):
                 near_indexes = self.find_near_nodes(new_node)
                 new_node = self.choose_parent(new_node, near_indexes)
                 if new_node:
@@ -90,7 +213,7 @@ class RRTStarReedsShepp(RRTStar):
                     self.rewire(new_node, near_indexes)
                     self.try_goal_path(new_node)
 
-            if animation and i % 5 == 0:
+            if animation and i % 500 == 0:
                 self.plot_start_goal_arrow()
                 self.draw_graph(rnd)
 
@@ -117,8 +240,7 @@ class RRTStarReedsShepp(RRTStar):
         if new_node is None:
             return
 
-        if self.check_collision(
-                new_node, self.obstacle_list, self.robot_radius):
+        if self.check_collision(new_node):
             self.node_list.append(new_node)
 
     def draw_graph(self, rnd=None):
@@ -149,9 +271,31 @@ class RRTStarReedsShepp(RRTStar):
         reeds_shepp_path_planning.plot_arrow(
             self.end.x, self.end.y, self.end.yaw)
 
-    def steer(self, from_node, to_node):
+    def analystic_expantion(self, sx, sy, syaw, gx, gy, gyaw, maxc, step_size=0.2):
+        paths = reeds_shepp_path_planning.calc_paths(sx, sy, syaw, gx, gy, gyaw, maxc, step_size)
+        if not paths:
+            return None, None, None, None, None  # could not generate any path
 
-        px, py, pyaw, mode, course_lengths = reeds_shepp_path_planning.reeds_shepp_path_planning(
+        pq = self.QueuePrior()
+        for path in paths:
+            pq.put(path, path.L)
+
+        while not pq.empty():
+            path = pq.get()
+            ind = range(0, len(path.x), self.c.COLLISION_CHECK_STEP)
+
+            path_x = [path.x[k] for k in ind]
+            path_y = [path.y[k] for k in ind]
+            path_yaw = [path.yaw[k] for k in ind]
+            path_node = self.Node(path_x, path_y, path_yaw)
+
+            if self.check_collision(path_node):
+                return path.x, path.y, path.yaw, path.ctypes, path.lengths
+
+        return None, None, None, None, None
+
+    def steer(self, from_node, to_node):
+        px, py, pyaw, mode, course_lengths = self.analystic_expantion(
             from_node.x, from_node.y, from_node.yaw, to_node.x,
             to_node.y, to_node.yaw, self.curvature, self.step_size)
 
@@ -172,6 +316,7 @@ class RRTStarReedsShepp(RRTStar):
         return new_node
 
     def calc_new_cost(self, from_node, to_node):
+
         _, _, _, _, course_lengths = reeds_shepp_path_planning.reeds_shepp_path_planning(
             from_node.x, from_node.y, from_node.yaw, to_node.x,
             to_node.y, to_node.yaw, self.curvature, self.step_size)

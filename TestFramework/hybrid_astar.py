@@ -1,5 +1,6 @@
 import abc
 import math
+import os.path
 import sys
 import time
 from typing import Tuple, List
@@ -25,6 +26,7 @@ class HybridAstar(PlanningAlgorithm):
 
     def __init__(self, ackerman_model):
         super().__init__(ackerman_model)
+        self.check_path_interval = 0
         self.path = None
         self.ox = None
         self.oy = None
@@ -149,6 +151,8 @@ class HybridAstar(PlanningAlgorithm):
         self.metrics.num_of_collision_check = 0
         self.metrics.num_of_sampled_nodes += 1
 
+        check_path_interval = self.get_check_path_interval(nstart, ngoal)
+        counter = 0
         while True:
             if not open_set:
                 return None
@@ -158,11 +162,16 @@ class HybridAstar(PlanningAlgorithm):
             closed_set[ind] = n_curr
             open_set.pop(ind)
 
-            update, fpath = self.update_node_with_analystic_expantion(n_curr, ngoal, P)
+            if counter == check_path_interval:
+                update, fpath = self.update_node_with_analystic_expantion(n_curr, ngoal, P)
 
-            if update:
-                fnode = fpath
-                break
+                if update:
+                    fnode = fpath
+                    break
+                counter = 0
+                check_path_interval = self.get_check_path_interval(n_curr, ngoal)
+            else:
+                counter += 1
 
             for i in range(len(steer_set)):
                 node = self.calc_next_node(n_curr, ind, steer_set[i], direc_set[i], P)
@@ -186,6 +195,13 @@ class HybridAstar(PlanningAlgorithm):
                     self.metrics.num_of_sampled_nodes += 1
 
         return self.extract_path(closed_set, fnode, nstart)
+
+    def get_check_path_interval(self, nstart, ngoal):
+        sx, sy = nstart.x[-1], nstart.y[-1]
+        gx, gy = ngoal.x[-1], ngoal.y[-1]
+        dis = math.dist((sx, sy), (gx, gy))
+        return dis // 10
+
 
     def extract_path(self, closed, ngoal, nstart):
         rx, ry, ryaw, direc = [], [], [], []
@@ -429,15 +445,17 @@ class HybridAstar(PlanningAlgorithm):
 
     def plot_path(self, save_path=None):
         # np.save('..\\..\\path.npy', np.array([x_list, y_list, yaw_list]))
-        ox, oy = self.ox, self.oy
+        # ox, oy = self.ox, self.oy
 
-        plt.plot(ox, oy, "sk", markersize=6 * 0.2)  # OBS_SIZE=0.2
+        # plt.plot(ox, oy, "sk", markersize=6 * 0.2)  # OBS_SIZE=0.2
 
-        if self.path is not None:
+        if self.path:
+            print("Searching succeed!")
             x_list = self.path.x
             y_list = self.path.y
-            yaw_list = self.path.yaw
+            # yaw_list = self.path.yaw
             direction = self.path.direction
+            print(direction)
 
             # compute the path length
             las_x, las_y = None, None
@@ -450,12 +468,17 @@ class HybridAstar(PlanningAlgorithm):
 
             # plot the path
             plt.plot(x_list, y_list, linewidth=1.5, color='r')
-
+        else:
+            print("Searching failed!")
         plt.title("Hybrid A*")
         plt.axis("equal")
 
         if not save_path:
             plt.show()
         else:
+            save_dir = os.path.dirname(save_path)
+            if not os.path.exists(save_dir):
+                os.makedirs(save_dir)
             plt.savefig(save_path)
-        print("Plot one path!")
+            plt.close()
+            print("Plot one path!")

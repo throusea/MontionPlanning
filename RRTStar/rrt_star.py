@@ -11,7 +11,7 @@ import sys
 import matplotlib.pyplot as plt
 import pathlib
 sys.path.append(str(pathlib.Path(__file__).parent.parent))
-
+from scipy.spatial import KDTree
 from RRT.rrt import RRT
 
 show_animation = True
@@ -56,6 +56,9 @@ class RRTStar(RRT):
         self.search_until_max_iter = search_until_max_iter
         self.node_list = []
 
+        self.kd_tree = KDTree([[obs[0], obs[1]] for obs in obstacle_list])
+        self.num_of_collision_check = 0
+
     def planning(self, animation=True):
         """
         rrt star path planning
@@ -65,7 +68,7 @@ class RRTStar(RRT):
 
         self.node_list = [self.start]
         for i in range(self.max_iter):
-            print("Iter:", i, ", number of nodes:", len(self.node_list))
+            # print("Iter:", i, ", number of nodes:", len(self.node_list))
             rnd = self.get_random_node()
             nearest_ind = self.get_nearest_node_index(self.node_list, rnd)
             new_node = self.steer(self.node_list[nearest_ind], rnd,
@@ -76,7 +79,7 @@ class RRTStar(RRT):
                            new_node.y-near_node.y)
 
             if self.check_collision(
-                    new_node, self.obstacle_list, self.robot_radius):
+                    new_node):
                 near_inds = self.find_near_nodes(new_node)
                 node_with_updated_parent = self.choose_parent(
                     new_node, near_inds)
@@ -86,7 +89,7 @@ class RRTStar(RRT):
                 else:
                     self.node_list.append(new_node)
 
-            if animation:
+            if animation and i % 1000 == 0:
                 self.draw_graph(rnd)
 
             if ((not self.search_until_max_iter)
@@ -128,7 +131,7 @@ class RRTStar(RRT):
             near_node = self.node_list[i]
             t_node = self.steer(near_node, new_node)
             if t_node and self.check_collision(
-                    t_node, self.obstacle_list, self.robot_radius):
+                    t_node):
                 costs.append(self.calc_new_cost(near_node, new_node))
             else:
                 costs.append(float("inf"))  # the cost of collision node
@@ -144,6 +147,36 @@ class RRTStar(RRT):
 
         return new_node
 
+    def check_collision(self, node):
+
+        if node is None:
+            return False
+
+        for ix, iy in zip(node.path_x, node.path_y):
+            self.num_of_collision_check += 1
+            r = 2
+
+            ids = self.kd_tree.query_ball_point([ix, iy], r)
+
+            for i in ids:
+                ox, oy, size = self.obstacle_list[i]
+
+                if (ox-ix) ** 2 + (oy - iy) ** 2 <= (size + self.robot_radius) ** 2:
+                    return False
+        return True
+
+
+        # for (ox, oy, size) in self.obstacleList:
+        #     self.num_of_collision_check += 1
+        #     dx_list = [ox - x for x in node.path_x]
+        #     dy_list = [oy - y for y in node.path_y]
+        #     d_list = [dx * dx + dy * dy for (dx, dy) in zip(dx_list, dy_list)]
+        #
+        #     if min(d_list) <= (size+self.robot_radius)**2:
+        #         return False  # collision
+        #
+        # return True  # safe
+
     def search_best_goal_node(self):
         dist_to_goal_list = [
             self.calc_dist_to_goal(n.x, n.y) for n in self.node_list
@@ -157,7 +190,7 @@ class RRTStar(RRT):
         for goal_ind in goal_inds:
             t_node = self.steer(self.node_list[goal_ind], self.goal_node)
             if self.check_collision(
-                    t_node, self.obstacle_list, self.robot_radius):
+                    t_node):
                 safe_goal_inds.append(goal_ind)
 
         if not safe_goal_inds:
@@ -225,7 +258,7 @@ class RRTStar(RRT):
             edge_node.cost = self.calc_new_cost(new_node, near_node)
 
             no_collision = self.check_collision(
-                edge_node, self.obstacle_list, self.robot_radius)
+                edge_node)
             improved_cost = near_node.cost > edge_node.cost
 
             if no_collision and improved_cost:
