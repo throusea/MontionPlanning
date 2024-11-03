@@ -11,6 +11,10 @@ import random
 import matplotlib.pyplot as plt
 import sys
 import pathlib
+
+import numpy as np
+from scipy.spatial import KDTree
+
 sys.path.append(str(pathlib.Path(__file__).parent))
 
 from rrt import RRT
@@ -51,7 +55,7 @@ def get_target_point(path, targetL):
     return [x, y, ti]
 
 
-def line_collision_check(first, second, obstacleList):
+def line_collision_check(first, second, kdtree):
     # Line Equation
 
     x1 = first[0]
@@ -59,23 +63,42 @@ def line_collision_check(first, second, obstacleList):
     x2 = second[0]
     y2 = second[1]
 
-    try:
-        a = y2 - y1
-        b = -(x2 - x1)
-        c = y2 * (x2 - x1) - x2 * (y2 - y1)
-    except ZeroDivisionError:
-        return False
+    l = math.hypot(x2 - x1, y2 - y1)
+    x_samples = np.linspace(x1, x2, int(l/2))
+    y_samples = np.linspace(y1, y2, int(l/2))
 
-    for (ox, oy, size) in obstacleList:
-        d = abs(a * ox + b * oy + c) / (math.hypot(a, b))
-        if d <= size:
+
+    for x, y in zip(x_samples, y_samples):
+        ids = kdtree.query_ball_point([x, y], 2.2)
+        if not ids:
+            continue
+        else:
             return False
+        # for (ox, oy, size) in obstacleList:
+        #     d = math.hypot(x - ox, y - oy)
+        #     if d <= size:
+        #         return False
+
+    # try:
+    #     a = y2 - y1
+    #     b = -(x2 - x1)
+    #     c = y2 * (x2 - x1) - x2 * (y2 - y1)
+    # except ZeroDivisionError:
+    #     return False
+    #
+    # for (ox, oy, size) in obstacleList:
+    #     d = abs(a * ox + b * oy + c) / (math.hypot(a, b))
+    #     if d <= size:
+    #         return False
 
     return True  # OK
 
 
 def path_smoothing(path, max_iter, obstacle_list):
     le = get_path_length(path)
+
+
+    kdtree = KDTree([[obs[0], obs[1]] for obs in obstacle_list])
 
     for i in range(max_iter):
         # Sample two points
@@ -94,7 +117,7 @@ def path_smoothing(path, max_iter, obstacle_list):
             continue
 
         # collision check
-        if not line_collision_check(first, second, obstacle_list):
+        if not line_collision_check(first, second, kdtree):
             continue
 
         # Create New path

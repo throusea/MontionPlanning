@@ -25,7 +25,9 @@ sys.path.append(str(pathlib.Path(__file__).parent.parent))
 
 from RRTStarReedsShepp.my_rrt_reeds_shepp import MyRRTStar
 from RRT.rrt import RRT
+from RRT.rrt_with_pathsmoothing import path_smoothing
 from RRTStar.rrt_star import RRTStar
+from BSplinePath.bspline_path import approximate_b_spline_path
 from planning_algorithm import PlanningAlgorithm, MapData, TestMetrics
 
 show_animation = True
@@ -37,12 +39,13 @@ class MyRRTStarReedsShepp(PlanningAlgorithm):
         super().__init__(ackerman_model)
         self.rrt = None
         self.path = None
+        self.obstacle_list = None
 
     def run(self, map_data: MapData):
         start, goal, obstacle_list = map_data.start, map_data.goal, map_data.obstacles
-        obstacle_list = self.get_local_obstacles(obstacle_list)
+        self.obstacle_list = self.get_local_obstacles(obstacle_list)
         # self.rrt = MyRRTStar(start, goal, obstacle_list, [0, 100], max_iter=50000, ackerman_model=self.c)
-        self.rrt = RRTStar(start, goal, obstacle_list, [0, 100], max_iter=10000, expand_dis=2.0, robot_radius=2.0)
+        self.rrt = RRTStar(start, goal, self.obstacle_list, [0, 100], max_iter=10000, expand_dis=2.0, robot_radius=2.0)
 
         st = time.time()
         self.path = self.rrt.planning(animation=False)
@@ -85,19 +88,28 @@ class MyRRTStarReedsShepp(PlanningAlgorithm):
 
         if self.path:
             print("Searching succeed!")
-            x_list = [p[0] for p in self.path]
-            y_list = [p[1] for p in self.path]
+            # Path smoothing
+            maxIter = 1000
+            smoothedPath = path_smoothing(self.path, maxIter, self.obstacle_list)
+
+            x_list = [p[0] for p in smoothedPath]
+            y_list = [p[1] for p in smoothedPath]
+
+            # rax_list, ray_list, heading_list, curvature = approximate_b_spline_path(
+            #     x_list, y_list, len(x_list)*4, s=0.5
+            # )
+            rax_list, ray_list = x_list, y_list
 
             # compute the path length
             las_x, las_y = None, None
             path_len = 0
-            for x, y in zip(x_list, y_list):
+            for x, y in zip(rax_list, ray_list):
                 if las_x and las_y:
                     path_len += math.sqrt((x - las_x) ** 2 + (y - las_y) ** 2)
                 las_x, las_y = x, y
             self.metrics.path_length = path_len
             # plot the path
-            plt.plot(x_list, y_list, linewidth=1.5, color='r')
+            plt.plot(rax_list, ray_list, linewidth=1.5, color='r')
 
         else:
             print("Searching failed!")

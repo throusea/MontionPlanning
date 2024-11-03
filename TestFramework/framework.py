@@ -63,7 +63,7 @@ def create_data():
 def main():
     # configuration
     map_name = 'm7t2e6r2'
-    algorithm_name = 'hybrid_astar'
+    algorithm_name = 'rrt_star'
 
     if algorithm_name == 'hybrid_astar':
         algorithm = hybrid_astar.HybridAstar(model_const.C)
