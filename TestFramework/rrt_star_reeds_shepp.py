@@ -28,6 +28,7 @@ from RRT.rrt import RRT
 from RRT.rrt_with_pathsmoothing import path_smoothing
 from RRTStar.rrt_star import RRTStar
 from BSplinePath.bspline_path import approximate_b_spline_path
+from CubicSpline.cubic_spline_planner import CubicSpline2D
 from planning_algorithm import PlanningAlgorithm, MapData, TestMetrics
 
 show_animation = True
@@ -95,10 +96,24 @@ class MyRRTStarReedsShepp(PlanningAlgorithm):
             x_list = [p[0] for p in smoothedPath]
             y_list = [p[1] for p in smoothedPath]
 
-            # rax_list, ray_list, heading_list, curvature = approximate_b_spline_path(
-            #     x_list, y_list, len(x_list)*4, s=0.5
-            # )
             rax_list, ray_list = x_list, y_list
+            # plt.plot(rax_list, ray_list, linewidth=1.5, color='b', label='Path0')
+
+            ds = 0.1  # [m] distance of each interpolated points
+            # print(len(rax_list))
+            # sp = CubicSpline2D(rax_list, ray_list)
+            # s = np.arange(0, sp.s[-1], ds)
+            # rx, ry, ryaw, rk = [], [], [], []
+            # for i_s in s:
+            #     ix, iy = sp.calc_position(i_s)
+            #     rx.append(ix)
+            #     ry.append(iy)
+            #     ryaw.append(sp.calc_yaw(i_s))
+            #     rk.append(sp.calc_curvature(i_s))
+            # rax_list, ray_list = rx, ry
+            # rax_list, ray_list, heading_list, curvature = approximate_b_spline_path(
+            #     x_list, y_list, len(x_list)*8, s=0.5
+            # )
 
             # compute the path length
             las_x, las_y = None, None
@@ -109,7 +124,7 @@ class MyRRTStarReedsShepp(PlanningAlgorithm):
                 las_x, las_y = x, y
             self.metrics.path_length = path_len
             # plot the path
-            plt.plot(rax_list, ray_list, linewidth=1.5, color='r')
+            plt.plot(rax_list, ray_list, linewidth=1.5, color='r', label='Path')
 
         else:
             print("Searching failed!")
